@@ -29,8 +29,11 @@ class DataManager:
             papers: 论文信息列表
             filename: 保存的文件名
         """
+        # 格式化每篇论文的数据
+        formatted_papers = [self.format_paper_data(paper) for paper in papers]
+        
         # 转换为DataFrame
-        df = pd.DataFrame(papers)
+        df = pd.DataFrame(formatted_papers)
         
         # 保存为CSV文件
         df.to_csv(filename, index=False, encoding="utf-8-sig")
@@ -43,8 +46,11 @@ class DataManager:
             papers: 论文信息列表
             filename: 保存的文件名
         """
+        # 格式化每篇论文的数据
+        formatted_papers = [self.format_paper_data(paper) for paper in papers]
+        
         # 转换为DataFrame
-        df = pd.DataFrame(papers)
+        df = pd.DataFrame(formatted_papers)
         
         # 保存为Excel文件
         df.to_excel(filename, index=False)
@@ -59,12 +65,26 @@ class DataManager:
         Returns:
             格式化后的论文信息
         """
+        # 处理研究亮点列表
+        highlights = paper.get("highlights", [])
+        if isinstance(highlights, list):
+            highlights_str = ", ".join(highlights)
+        else:
+            highlights_str = str(highlights)
+            
+        # 处理应用领域列表
+        applications = paper.get("applications", [])
+        if isinstance(applications, list):
+            applications_str = ", ".join(applications)
+        else:
+            applications_str = str(applications)
+            
         formatted = {
             "标题": paper.get("title", ""),
             "链接": paper.get("link", ""),
             "原始摘要": paper.get("abstract", ""),
             "中文摘要": paper.get("chinese_abstract", ""),
-            "研究亮点": ", ".join(paper.get("highlights", [])),
-            "应用领域": ", ".join(paper.get("applications", []))
+            "研究亮点": highlights_str,
+            "应用领域": applications_str
         }
         return formatted
