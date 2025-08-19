@@ -90,6 +90,35 @@ class EmailClient:
         
         return body
     
+    def get_emails_batch(self, max_emails: int = 10, batch_size: int = 5, sender: str = "scholaralerts-noreply@google.com", folder: str = "inbox"):
+        """
+        分批获取邮件ID的生成器函数
+        
+        Args:
+            max_emails: 最大处理邮件数
+            batch_size: 每批邮件数量
+            sender: 发件人邮箱地址
+            folder: 邮箱文件夹名称，默认为"inbox"
+            
+        Yields:
+            邮件ID列表的批次
+        """
+        # 选择指定的文件夹
+        self.mail.select(folder)
+        
+        # 搜索指定发件人的邮件
+        status, messages = self.mail.search(None, f'FROM "{sender}"')
+        
+        # 获取邮件ID列表
+        email_ids = messages[0].split()
+        
+        # 确定要处理的邮件范围
+        email_ids = email_ids[-max_emails:] if len(email_ids) > max_emails else email_ids
+        
+        # 分批返回邮件ID
+        for i in range(0, len(email_ids), batch_size):
+            yield email_ids[i:i + batch_size]
+    
     def close(self):
         """
         关闭邮箱连接
