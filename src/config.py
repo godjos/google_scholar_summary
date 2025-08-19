@@ -36,6 +36,9 @@ class Config:
         self.max_emails = int(os.getenv("MAX_EMAILS", "10"))
         self.output_file = os.getenv("OUTPUT_FILE", "scholar_results.csv")
         
+        # 是否使用大模型处理
+        self.use_llm = os.getenv("USE_LLM", "true").lower() == "true"
+        
         # IMAP服务器配置
         self.imap_server = "imap.qq.com"
         self.imap_port = 993
@@ -45,3 +48,6 @@ class Config:
         
         # 邮箱文件夹配置
         self.email_folder = os.getenv("EMAIL_FOLDER", "inbox")
+        
+        # 数据库配置
+        self.database_path = os.getenv("DATABASE_PATH", "scholar_data.db")
