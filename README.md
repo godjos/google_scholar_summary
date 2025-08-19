@@ -6,7 +6,7 @@
 
 1. 自动连接QQ邮箱并获取Google Scholar通知邮件
 2. 解析邮件内容，提取论文标题、链接和摘要
-3. 使用大模型API（如OpenAI GPT）对论文进行分析
+3. 使用大模型API（如OpenAI GPT、Google Gemini等）对论文进行分析
 4. 生成中文摘要、研究亮点和潜在应用领域
 5. 将结果导出为CSV文件
 
@@ -66,9 +66,13 @@
 ### 邮箱配置
 - `QQ_EMAIL_ADDRESS`: 你的QQ邮箱地址
 - `QQ_EMAIL_AUTH_CODE`: QQ邮箱授权码（不是登录密码）
+- `EMAIL_FOLDER`: 邮箱文件夹名称，默认为inbox
 
 ### 大模型API配置
 - `LLM_API_KEY`: 大模型API密钥（支持OpenAI或Google AI Platform）
+- `LLM_API_BASE_URL`: API基础URL，默认为https://api.openai.com
+- `LLM_MODEL_NAME`: 模型名称，默认为gpt-3.5-turbo
+- `LLM_API_PATH`: API路径，默认为v1/chat/completions
 
 ### 其他配置
 - `MAX_EMAILS`: 最大处理邮件数，默认为10
@@ -77,12 +81,12 @@
 ## 输出文件
 
 脚本运行后会生成一个CSV文件（默认为`scholar_results.csv`），包含以下字段：
-- `title`: 论文标题
-- `link`: 论文链接
-- `abstract`: 原始摘要
-- `chinese_abstract`: 中文摘要
-- `highlights`: 研究亮点
-- `applications`: 潜在应用领域
+- `标题`: 论文标题
+- `链接`: 论文链接
+- `原始摘要`: 原始英文摘要
+- `中文摘要`: 由大模型生成的中文摘要
+- `研究亮点`: 由大模型提取的研究亮点（逗号分隔）
+- `应用领域`: 由大模型预测的潜在应用领域（逗号分隔）
 
 ## 模块说明
 
@@ -109,6 +113,28 @@
 你可以根据需要修改以下部分：
 
 1. 邮件解析逻辑（[src/paper_parser.py](file:///home/HiNAS/mrz/code/google_scholar_summary/src/paper_parser.py)中的[extract_paper_info](file:///home/HiNAS/mrz/code/google_scholar_summary/src/paper_parser.py#L27-L66)方法）
-2. 大模型提示词（[src/llm_client.py](file:///home/HiNAS/mrz/code/google_scholar_summary/src/llm_client.py)中的[get_paper_analysis](file:///home/HiNAS/mrz/code/google_scholar_summary/src/llm_client.py#L26-L76)方法）
+2. 大模型提示词（[src/llm_client.py](file:///home/HiNAS/mrz/code/google_scholar_summary/src/llm_client.py)中的[get_paper_analysis](file:///home/HiNAS/mrz/code/google_scholar_summary/src/llm_client.py#L37-L83)方法）
 3. 输出格式和内容（[src/data_manager.py](file:///home/HiNAS/mrz/code/google_scholar_summary/src/data_manager.py)中的相关方法）
 4. 支持其他邮箱服务商（修改[src/config.py](file:///home/HiNAS/mrz/code/google_scholar_summary/src/config.py)和[src/email_client.py](file:///home/HiNAS/mrz/code/google_scholar_summary/src/email_client.py)）
+
+## 支持的大模型API
+
+本项目支持多种大模型API：
+
+1. **OpenAI API**
+   - `LLM_API_BASE_URL`: https://api.openai.com
+   - `LLM_MODEL_NAME`: gpt-3.5-turbo, gpt-4等
+   - `LLM_API_PATH`: v1/chat/completions
+
+2. **Azure OpenAI API**
+   - `LLM_API_BASE_URL`: https://your-resource-name.openai.azure.com
+   - `LLM_MODEL_NAME`: 你的部署名称
+   - `LLM_API_PATH`: openai/deployments/{deployment-name}/chat/completions?api-version={version}
+
+3. **Google Gemini API**
+   - `LLM_API_BASE_URL`: https://generativelanguage.googleapis.com
+   - `LLM_MODEL_NAME`: gemini-pro
+   - `LLM_API_PATH`: v1beta/models/gemini-pro:generateContent
+
+4. **其他兼容OpenAI的API**
+   - 根据提供商要求配置相应参数
