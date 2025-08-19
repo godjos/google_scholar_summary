@@ -85,6 +85,10 @@ def main():
                 # 获取邮件内容
                 email_content = email_client_obj.get_email_content(email_id)
                 
+                # 获取邮件接收时间
+                receive_time = email_client_obj.get_email_receive_time(email_id)
+                print(f"  邮件接收时间: {receive_time}")
+                
                 # 解析邮件中的论文信息
                 papers = paper_parser_obj.extract_paper_info(email_content)
                 print(f"  从邮件中提取到 {len(papers)} 篇论文")
@@ -92,6 +96,9 @@ def main():
                 # 处理每篇论文
                 new_papers_in_email = 0
                 for paper in papers:
+                    # 添加接收时间到论文信息中
+                    paper["receive_time"] = receive_time
+                    
                     # 检查论文是否已存在
                     if data_manager_obj.is_paper_exists(paper['link']):
                         print(f"    论文 '{paper['title'][:50]}...' 已存在，跳过...")
@@ -132,7 +139,7 @@ def main():
                     all_papers.append(paper)
                 
                 # 标记邮件为已处理（即使其中没有新论文）
-                data_manager_obj.mark_email_processed(email_id)
+                data_manager_obj.mark_email_processed(email_id, receive_time)
                 total_processed_emails += 1
                 
                 print(f"  从邮件 {email_id} 中新增 {new_papers_in_email} 篇论文")
