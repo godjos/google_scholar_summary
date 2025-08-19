@@ -9,6 +9,7 @@
 import imaplib
 import email
 from typing import List
+import datetime
 
 
 class EmailClient:
@@ -89,6 +90,38 @@ class EmailClient:
             body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
         
         return body
+    
+    def get_email_receive_time(self, email_id: str) -> str:
+        """
+        获取邮件接收时间
+        
+        Args:
+            email_id: 邮件ID
+            
+        Returns:
+            邮件接收时间字符串
+        """
+        # 获取邮件头部信息
+        status, msg_data = self.mail.fetch(email_id, "(RFC822)")
+        msg = email.message_from_bytes(msg_data[0][1])
+        
+        # 获取日期头部
+        date_header = msg.get("Date")
+        if date_header:
+            try:
+                # 解析日期
+                date_tuple = email.utils.parsedate_tz(date_header)
+                if date_tuple:
+                    # 转换为本地时间
+                    local_date = datetime.datetime.fromtimestamp(
+                        email.utils.mktime_tz(date_tuple)
+                    )
+                    return local_date.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception as e:
+                print(f"解析邮件时间出错: {e}")
+        
+        # 如果无法解析，返回当前时间
+        return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     def get_emails_batch(self, max_emails: int = 10, batch_size: int = 5, sender: str = "scholaralerts-noreply@google.com", folder: str = "inbox"):
         """

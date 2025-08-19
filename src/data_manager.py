@@ -39,6 +39,7 @@ class DataManager:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS processed_emails (
                 email_id TEXT PRIMARY KEY,
+                receive_time TEXT,
                 processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -90,19 +91,20 @@ class DataManager:
         conn.close()
         return result is not None
     
-    def mark_email_processed(self, email_id: str):
+    def mark_email_processed(self, email_id: str, receive_time: str = ""):
         """
         标记邮件为已处理
         
         Args:
             email_id: 邮件ID
+            receive_time: 邮件接收时间
         """
         conn = sqlite3.connect(self.database_path)
         cursor = conn.cursor()
         
         cursor.execute(
-            'INSERT OR IGNORE INTO processed_emails (email_id) VALUES (?)', 
-            (email_id,)
+            'INSERT OR IGNORE INTO processed_emails (email_id, receive_time) VALUES (?, ?)', 
+            (email_id, receive_time)
         )
         
         conn.commit()
@@ -188,20 +190,23 @@ class DataManager:
         finally:
             conn.close()
     
-    def get_all_papers(self) -> List[Dict]:
+    def get_all_papers_with_receive_time(self) -> List[Dict]:
         """
-        从数据库获取所有论文
+        从数据库获取所有论文及接收时间
         
         Returns:
-            论文信息列表
+            论文信息列表（包含接收时间）
         """
         conn = sqlite3.connect(self.database_path)
         cursor = conn.cursor()
         
+        # 查询论文信息及关联的邮件接收时间
         cursor.execute('''
-            SELECT title, link, abstract, chinese_abstract, highlights, applications 
-            FROM papers 
-            ORDER BY created_at DESC
+            SELECT p.title, p.link, p.abstract, p.chinese_abstract, p.highlights, p.applications, pe.receive_time
+            FROM papers p
+            LEFT JOIN email_paper_relations epr ON p.link = epr.paper_link
+            LEFT JOIN processed_emails pe ON epr.email_id = pe.email_id
+            ORDER BY p.created_at DESC
         ''')
         
         rows = cursor.fetchall()
@@ -226,7 +231,8 @@ class DataManager:
                 "abstract": row[2],
                 "chinese_abstract": row[3],
                 "highlights": highlights,
-                "applications": applications
+                "applications": applications,
+                "receive_time": row[6] if row[6] else ""
             }
             papers.append(paper)
         
@@ -242,7 +248,7 @@ class DataManager:
         """
         # 如果传入的是空列表，则从数据库获取所有论文
         if not papers:
-            papers = self.get_all_papers()
+            papers = self.get_all_papers_with_receive_time()
             
         # 格式化每篇论文的数据
         formatted_papers = [self.format_paper_data(paper) for paper in papers]
@@ -263,7 +269,7 @@ class DataManager:
         """
         # 如果传入的是空列表，则从数据库获取所有论文
         if not papers:
-            papers = self.get_all_papers()
+            papers = self.get_all_papers_with_receive_time()
             
         # 格式化每篇论文的数据
         formatted_papers = [self.format_paper_data(paper) for paper in papers]
@@ -304,6 +310,7 @@ class DataManager:
             "原始摘要": paper.get("abstract", ""),
             "中文摘要": paper.get("chinese_abstract", ""),
             "研究亮点": highlights_str,
-            "应用领域": applications_str
+            "应用领域": applications_str,
+            "收件时间": paper.get("receive_time", "")
         }
         return formatted
