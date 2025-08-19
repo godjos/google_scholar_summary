@@ -34,25 +34,7 @@ class PaperParser:
         """
         # 这里需要根据实际邮件格式编写正则表达式
         # 以下是一个示例格式，需要根据实际情况调整
-        papers = []
-        
-        # 尝试多种可能的邮件格式
-        # print(email_body)
-        # 格式1: 标题、链接、摘要分行显示
-        pattern1 = r'Title:\s*(.*?)\s*Link:\s*(https?://[^\s]+)\s*Abstract:\s*(.*?)(?=\n\nTitle:|\Z)'
-        matches1 = re.findall(pattern1, email_body, re.DOTALL)
-        
-        for match in matches1:
-            papers.append({
-                "title": match[0].strip(),
-                "link": match[1].strip(),
-                "abstract": match[2].strip()
-            })
-        
-        # 如果第一种格式没有匹配到，尝试解析HTML格式的Google Scholar邮件
-        if not papers:
-            # 解析HTML格式的Google Scholar邮件
-            papers = self._parse_html_format(email_body)
+        papers = self._parse_html_format(email_body)
         
         return papers
     
@@ -87,6 +69,15 @@ class PaperParser:
             clean_title = re.sub(r'<[^>]+>', '', titles[i][1]).strip()
             clean_title = unescape(clean_title)
             
+            # 提取真实的论文链接
+            real_link = titles[i][0]
+            # 检查是否是Google Scholar的跳转链接
+            if 'scholar.google.com/scholar_url?url=' in real_link:
+                # 从跳转链接中提取真实的URL
+                url_match = re.search(r'url=([^&]+)', real_link)
+                if url_match:
+                    real_link = unescape(url_match.group(1))
+            
             # 清理摘要中的HTML标签和实体
             clean_abstract = ""
             if i < len(abstracts):
@@ -96,7 +87,7 @@ class PaperParser:
             
             papers.append({
                 "title": clean_title,
-                "link": titles[i][0],
+                "link": real_link,
                 "abstract": clean_abstract
             })
         

@@ -36,7 +36,12 @@ def main():
     paper_parser_obj = PaperParser()
     
     # 创建大模型客户端实例
-    llm_client_obj = LLMClient(config_obj.llm_api_key)
+    llm_client_obj = LLMClient(
+        config_obj.llm_api_key,
+        config_obj.llm_api_base_url,
+        config_obj.llm_model_name,
+        config_obj.llm_api_path
+    )
     
     # 创建数据管理器实例
     data_manager_obj = DataManager()
@@ -69,7 +74,8 @@ def main():
                 # 调用大模型API获取分析结果
                 llm_result = llm_client_obj.get_paper_analysis(
                     paper['title'], 
-                    paper['abstract']
+                    paper['abstract'],
+                    paper['link']
                 )
                 
                 # 合并原始信息和分析结果
