@@ -8,6 +8,7 @@
 
 import re
 from typing import List, Dict
+from html import unescape
 
 
 class PaperParser:
@@ -36,7 +37,7 @@ class PaperParser:
         papers = []
         
         # 尝试多种可能的邮件格式
-        
+        # print(email_body)
         # 格式1: 标题、链接、摘要分行显示
         pattern1 = r'Title:\s*(.*?)\s*Link:\s*(https?://[^\s]+)\s*Abstract:\s*(.*?)(?=\n\nTitle:|\Z)'
         matches1 = re.findall(pattern1, email_body, re.DOTALL)
@@ -48,11 +49,56 @@ class PaperParser:
                 "abstract": match[2].strip()
             })
         
-        # 如果第一种格式没有匹配到，尝试其他格式
+        # 如果第一种格式没有匹配到，尝试解析HTML格式的Google Scholar邮件
         if not papers:
-            # 格式2: 使用不同的分隔符
-            # 这里可以根据实际邮件格式添加更多解析规则
-            pass
+            # 解析HTML格式的Google Scholar邮件
+            papers = self._parse_html_format(email_body)
+        
+        return papers
+    
+    def _parse_html_format(self, email_body: str) -> List[Dict[str, str]]:
+        """
+        解析HTML格式的Google Scholar邮件
+        
+        Args:
+            email_body: HTML格式的邮件正文
+            
+        Returns:
+            论文信息列表
+        """
+        papers = []
+        
+        # 匹配每篇论文的模式
+        # 匹配论文链接和标题
+        title_pattern = r'<a href="([^"]+)" class="gse_alrt_title"[^>]*>(.*?)</a>'
+        # 匹配作者和来源信息
+        author_pattern = r'<div style="color:#006621;line-height:18px">(.*?)</div>'
+        # 匹配摘要信息
+        abstract_pattern = r'<div class="gse_alrt_sni"[^>]*>(.*?)</div>'
+        
+        # 找到所有论文标题和链接
+        titles = re.findall(title_pattern, email_body, re.DOTALL)
+        authors = re.findall(author_pattern, email_body, re.DOTALL)
+        abstracts = re.findall(abstract_pattern, email_body, re.DOTALL)
+        
+        # 组合信息
+        for i in range(len(titles)):
+            # 清理标题中的HTML标签和实体
+            clean_title = re.sub(r'<[^>]+>', '', titles[i][1]).strip()
+            clean_title = unescape(clean_title)
+            
+            # 清理摘要中的HTML标签和实体
+            clean_abstract = ""
+            if i < len(abstracts):
+                clean_abstract = re.sub(r'<[^>]+>', ' ', abstracts[i]).strip()
+                clean_abstract = re.sub(r'\s+', ' ', clean_abstract)  # 合并多个空格
+                clean_abstract = unescape(clean_abstract)
+            
+            papers.append({
+                "title": clean_title,
+                "link": titles[i][0],
+                "abstract": clean_abstract
+            })
         
         return papers
     

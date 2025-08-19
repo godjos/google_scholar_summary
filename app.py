@@ -48,7 +48,7 @@ def main():
         
         # 搜索Google Scholar邮件
         print("正在搜索Google Scholar邮件...")
-        email_ids = email_client_obj.search_scholar_emails(config_obj.max_emails)
+        email_ids = email_client_obj.search_scholar_emails(config_obj.max_emails, config_obj.scholar_sender, config_obj.email_folder)
         print(f"找到 {len(email_ids)} 封邮件")
         
         all_papers = []

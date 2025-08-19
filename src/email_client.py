@@ -39,19 +39,20 @@ class EmailClient:
         # 登录
         self.mail.login(self.email_address, self.auth_code)
     
-    def search_scholar_emails(self, max_emails: int = 10, sender: str = "scholaralerts-noreply@google.com") -> List[str]:
+    def search_scholar_emails(self, max_emails: int = 10, sender: str = "scholaralerts-noreply@google.com", folder: str = "inbox") -> List[str]:
         """
         搜索Google Scholar Alerts邮件
         
         Args:
             max_emails: 最大处理邮件数
             sender: 发件人邮箱地址
+            folder: 邮箱文件夹名称，默认为"inbox"
             
         Returns:
             邮件ID列表
         """
-        # 选择收件箱
-        self.mail.select("inbox")
+        # 选择指定的文件夹
+        self.mail.select(folder)
         
         # 搜索指定发件人的邮件
         status, messages = self.mail.search(None, f'FROM "{sender}"')

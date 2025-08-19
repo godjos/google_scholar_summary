@@ -39,3 +39,6 @@ class Config:
         
         # Google Scholar发件人
         self.scholar_sender = "scholaralerts-noreply@google.com"
+        
+        # 邮箱文件夹配置
+        self.email_folder = os.getenv("EMAIL_FOLDER", "inbox")
