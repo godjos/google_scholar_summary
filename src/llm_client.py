@@ -7,8 +7,8 @@
 """
 
 import json
-import requests
 from typing import Dict
+from openai import OpenAI, APIError
 
 
 class LLMClient:
@@ -17,7 +17,7 @@ class LLMClient:
     """
     
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1", 
-                 model: str = "gpt-3.5-turbo", api_path: str = "v1/chat/completions"):
+                 model: str = "gpt-3.5-turbo"):
         """
         初始化大模型客户端
         
@@ -25,12 +25,14 @@ class LLMClient:
             api_key: API密钥
             base_url: API基础URL
             model: 模型名称
-            api_path: API路径
         """
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
-        self.api_path = api_path
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url
+        )
     
     def get_paper_analysis(self, title: str, abstract: str, link: str = "") -> Dict:
         """
@@ -60,26 +62,17 @@ class LLMClient:
         }}
         """
         
-        # 构建请求头
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        # 构建请求数据
-        data = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.7
-        }
-        
-        # 发送请求
-        response = requests.post(f"{self.base_url}/{self.api_path}", headers=headers, json=data)
-        result = response.json()
-        
-        # 如果请求成功，返回结果
-        if response.status_code == 200 and "choices" in result:
-            content = result["choices"][0]["message"]["content"]
+        try:
+            # 使用OpenAI客户端发送请求
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            
+            # 获取响应内容
+            content = response.choices[0].message.content
+            
             try:
                 # 尝试解析返回的JSON内容
                 # 首先尝试直接解析
@@ -107,7 +100,8 @@ class LLMClient:
                     "highlights": ["亮点1", "亮点2", "亮点3"],
                     "applications": ["应用领域1", "应用领域2"]
                 }
-        else:
+                
+        except APIError as e:
             # 出错时返回默认值
             return {
                 "chinese_abstract": f"这是论文《{title}》的中文摘要示例",

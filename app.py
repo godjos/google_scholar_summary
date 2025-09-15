@@ -41,8 +41,7 @@ def main():
         llm_client_obj = LLMClient(
             config_obj.llm_api_key,
             config_obj.llm_api_base_url,
-            config_obj.llm_model_name,
-            config_obj.llm_api_path
+            config_obj.llm_model_name
         )
         print("大模型处理已启用")
     else:

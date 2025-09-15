@@ -30,7 +30,6 @@ class Config:
         self.llm_api_key = os.getenv("LLM_API_KEY", "your_api_key")
         self.llm_api_base_url = os.getenv("LLM_API_BASE_URL", "https://api.openai.com/v1")
         self.llm_model_name = os.getenv("LLM_MODEL_NAME", "gpt-3.5-turbo")
-        self.llm_api_path = os.getenv("LLM_API_PATH", "v1/chat/completions")
         
         # 其他配置
         self.max_emails = int(os.getenv("MAX_EMAILS", "10"))
