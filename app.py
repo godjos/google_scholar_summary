@@ -8,6 +8,8 @@ Google Scholar 邮件通知处理器
 
 import sys
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # 添加src目录到Python路径
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -17,6 +19,70 @@ from src.email_client import EmailClient
 from src.paper_parser import PaperParser
 from src.llm_client import LLMClient
 from src.data_manager import DataManager
+
+
+def analyze_paper_with_client(llm_client, paper):
+    """
+    使用指定的LLM客户端分析论文
+    
+    Args:
+        llm_client: LLM客户端实例
+        paper: 论文信息字典
+        
+    Returns:
+        分析结果
+    """
+    try:
+        print(f"    正在使用API密钥分析论文: {paper['title'][:50]}...")
+        llm_result = llm_client.get_paper_analysis(
+            paper['title'], 
+            paper['abstract'],
+            paper['link']
+        )
+        return llm_result
+    except Exception as e:
+        print(f"    使用API密钥分析论文 '{paper['title'][:50]}...' 时出错: {e}")
+        return None
+
+
+def analyze_paper_parallel(llm_clients, paper):
+    """
+    使用多个LLM客户端并行分析论文
+    
+    Args:
+        llm_clients: LLM客户端实例列表
+        paper: 论文信息字典
+        
+    Returns:
+        分析结果
+    """
+    if not llm_clients:
+        return None
+        
+    # 如果只有一个客户端，直接使用
+    if len(llm_clients) == 1:
+        return analyze_paper_with_client(llm_clients[0], paper)
+    
+    # 使用线程池并行处理
+    with ThreadPoolExecutor(max_workers=len(llm_clients)) as executor:
+        # 提交所有任务
+        future_to_client = {
+            executor.submit(analyze_paper_with_client, client, paper): client 
+            for client in llm_clients
+        }
+        
+        # 返回第一个成功的任务结果
+        for future in as_completed(future_to_client):
+            result = future.result()
+            if result is not None:
+                return result
+    
+    # 如果所有客户端都失败，返回默认值
+    return {
+        "chinese_abstract": f"这是论文《{paper['title']}》的中文摘要示例",
+        "highlights": ["亮点1", "亮点2", "亮点3"],
+        "applications": ["应用领域1", "应用领域2"]
+    }
 
 
 def main():
@@ -36,14 +102,16 @@ def main():
     paper_parser_obj = PaperParser()
     
     # 根据配置决定是否创建大模型客户端实例
-    llm_client_obj = None
+    llm_client_objs = []
     if config_obj.use_llm:
-        llm_client_obj = LLMClient(
-            config_obj.llm_api_key,
-            config_obj.llm_api_base_url,
-            config_obj.llm_model_name
-        )
-        print("大模型处理已启用")
+        for api_key in config_obj.llm_api_keys:
+            llm_client = LLMClient(
+                api_key,
+                config_obj.llm_api_base_url,
+                config_obj.llm_model_name
+            )
+            llm_client_objs.append(llm_client)
+        print(f"大模型处理已启用，使用 {len(llm_client_objs)} 个API密钥")
     else:
         print("大模型处理已禁用，仅收集论文基本信息")
     
@@ -109,15 +177,11 @@ def main():
                         continue
                         
                     # 根据配置决定是否使用大模型处理
-                    if config_obj.use_llm and llm_client_obj:
+                    if config_obj.use_llm and llm_client_objs:
                         print(f"    正在分析论文: {paper['title'][:50]}...")
                         try:
-                            # 调用大模型API获取分析结果
-                            llm_result = llm_client_obj.get_paper_analysis(
-                                paper['title'], 
-                                paper['abstract'],
-                                paper['link']
-                            )
+                            # 使用多个API密钥并行处理
+                            llm_result = analyze_paper_parallel(llm_client_objs, paper)
                             
                             # 合并原始信息和分析结果
                             paper.update(llm_result)

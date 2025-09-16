@@ -26,8 +26,9 @@ class Config:
         self.email_address = os.getenv("QQ_EMAIL_ADDRESS", "your_email@qq.com")
         self.auth_code = os.getenv("QQ_EMAIL_AUTH_CODE", "your_auth_code")
         
-        # 大模型API配置
-        self.llm_api_key = os.getenv("LLM_API_KEY", "your_api_key")
+        # 大模型API配置 - 支持多个API密钥
+        llm_api_keys = os.getenv("LLM_API_KEY", "your_api_key")
+        self.llm_api_keys = [key.strip() for key in llm_api_keys.split(",") if key.strip()]
         self.llm_api_base_url = os.getenv("LLM_API_BASE_URL", "https://api.openai.com/v1")
         self.llm_model_name = os.getenv("LLM_MODEL_NAME", "gpt-3.5-turbo")
         
