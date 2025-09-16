@@ -10,6 +10,7 @@ import sys
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+from itertools import cycle
 
 # 添加src目录到Python路径
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -163,37 +164,84 @@ def main():
                 papers = paper_parser_obj.extract_paper_info(email_content)
                 print(f"  从邮件中提取到 {len(papers)} 篇论文")
                 
-                # 处理每篇论文
+                # 处理每篇论文（并行处理多篇论文）
                 new_papers_in_email = 0
-                for paper in papers:
-                    # 添加接收时间到论文信息中
-                    paper["receive_time"] = receive_time
+                if config_obj.use_llm and llm_client_objs:
+                    # 如果启用了LLM且有API密钥，则并行处理多篇论文
+                    print(f"    并行处理 {len(papers)} 篇论文...")
                     
-                    # 检查论文是否已存在
-                    if data_manager_obj.is_paper_exists(paper['link']):
-                        print(f"    论文 '{paper['title'][:50]}...' 已存在，跳过...")
-                        # 仍然创建邮件与论文的关联
-                        data_manager_obj.create_email_paper_relation(email_id, paper['link'])
-                        continue
-                        
-                    # 根据配置决定是否使用大模型处理
-                    if config_obj.use_llm and llm_client_objs:
-                        print(f"    正在分析论文: {paper['title'][:50]}...")
-                        try:
-                            # 使用多个API密钥并行处理
-                            llm_result = analyze_paper_parallel(llm_client_objs, paper)
+                    # 创建API密钥循环迭代器
+                    api_cycle = cycle(llm_client_objs)
+                    
+                    # 使用线程池并行处理论文
+                    with ThreadPoolExecutor(max_workers=min(len(papers), len(llm_client_objs))) as executor:
+                        # 提交论文分析任务
+                        future_to_paper = {}
+                        for paper in papers:
+                            # 添加接收时间到论文信息中
+                            paper["receive_time"] = receive_time
                             
-                            # 合并原始信息和分析结果
-                            paper.update(llm_result)
-                        except Exception as e:
-                            print(f"    分析论文 '{paper['title'][:50]}...' 时出错: {e}")
-                            # 使用默认值继续处理
-                            paper.update({
-                                "chinese_abstract": "",
-                                "highlights": [],
-                                "applications": []
-                            })
-                    else:
+                            # 检查论文是否已存在
+                            if data_manager_obj.is_paper_exists(paper['link']):
+                                print(f"    论文 '{paper['title'][:50]}...' 已存在，跳过...")
+                                # 仍然创建邮件与论文的关联
+                                data_manager_obj.create_email_paper_relation(email_id, paper['link'])
+                                continue
+                            
+                            # 分配API密钥
+                            client = next(api_cycle)
+                            future = executor.submit(analyze_paper_with_client, client, paper)
+                            future_to_paper[future] = paper
+                        
+                        # 处理完成的任务
+                        for future in as_completed(future_to_paper):
+                            paper = future_to_paper[future]
+                            try:
+                                llm_result = future.result()
+                                if llm_result is not None:
+                                    # 合并原始信息和分析结果
+                                    paper.update(llm_result)
+                                else:
+                                    # 使用默认值
+                                    paper.update({
+                                        "chinese_abstract": "",
+                                        "highlights": [],
+                                        "applications": []
+                                    })
+                            except Exception as e:
+                                print(f"    分析论文 '{paper['title'][:50]}...' 时出错: {e}")
+                                # 使用默认值继续处理
+                                paper.update({
+                                    "chinese_abstract": "",
+                                    "highlights": [],
+                                    "applications": []
+                                })
+                            
+                            # 保存到数据库
+                            if data_manager_obj.save_paper(paper):
+                                total_new_papers += 1
+                                new_papers_in_email += 1
+                                
+                                # 创建邮件与论文的关联
+                                data_manager_obj.create_email_paper_relation(email_id, paper['link'])
+                                
+                                # 添加到当前会话处理的论文列表
+                                all_papers.append(paper)
+                            else:
+                                print(f"    论文 '{paper['title'][:50]}...' 保存失败或已存在")
+                else:
+                    # 不使用大模型时，顺序处理论文
+                    for paper in papers:
+                        # 添加接收时间到论文信息中
+                        paper["receive_time"] = receive_time
+                        
+                        # 检查论文是否已存在
+                        if data_manager_obj.is_paper_exists(paper['link']):
+                            print(f"    论文 '{paper['title'][:50]}...' 已存在，跳过...")
+                            # 仍然创建邮件与论文的关联
+                            data_manager_obj.create_email_paper_relation(email_id, paper['link'])
+                            continue
+                            
                         # 不使用大模型时，添加默认值
                         paper.update({
                             "chinese_abstract": "",
@@ -201,19 +249,19 @@ def main():
                             "applications": []
                         })
                         print(f"    收集论文信息: {paper['title'][:50]}...")
-                    
-                    # 保存到数据库
-                    if data_manager_obj.save_paper(paper):
-                        total_new_papers += 1
-                        new_papers_in_email += 1
                         
-                        # 创建邮件与论文的关联
-                        data_manager_obj.create_email_paper_relation(email_id, paper['link'])
-                        
-                        # 添加到当前会话处理的论文列表
-                        all_papers.append(paper)
-                    else:
-                        print(f"    论文 '{paper['title'][:50]}...' 保存失败或已存在")
+                        # 保存到数据库
+                        if data_manager_obj.save_paper(paper):
+                            total_new_papers += 1
+                            new_papers_in_email += 1
+                            
+                            # 创建邮件与论文的关联
+                            data_manager_obj.create_email_paper_relation(email_id, paper['link'])
+                            
+                            # 添加到当前会话处理的论文列表
+                            all_papers.append(paper)
+                        else:
+                            print(f"    论文 '{paper['title'][:50]}...' 保存失败或已存在")
                 
                 # 标记邮件为已处理（即使其中没有新论文）
                 data_manager_obj.mark_email_processed(email_id, receive_time)
