@@ -142,6 +142,9 @@ def main():
             batch_count += 1
             print(f"正在处理第 {batch_count} 批邮件，本批包含 {len(email_batch)} 封邮件")
             
+            # 初始化每批邮件新增论文计数器
+            new_papers_in_email = 0
+            
             # 处理每封邮件
             for email_id in email_batch:
                 # 检查邮件是否已处理
@@ -165,7 +168,6 @@ def main():
                 print(f"  从邮件中提取到 {len(papers)} 篇论文")
                 
                 # 处理每篇论文（并行处理多篇论文）
-                new_papers_in_email = 0
                 if config_obj.use_llm and llm_client_objs:
                     # 如果启用了LLM且有API密钥，则并行处理多篇论文
                     print(f"    并行处理 {len(papers)} 篇论文...")
