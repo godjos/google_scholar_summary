@@ -104,8 +104,8 @@ class EmailClient:
         # 选择指定的文件夹
         self.mail.select(folder)
         
-        # 搜索指定发件人的邮件
-        status, messages = self.mail.search(None, f'FROM "{sender}"')
+        # 搜索指定发件人的未读邮件
+        status, messages = self.mail.search(None, f'FROM "{sender}" UNSEEN')
         
         # 获取邮件ID列表
         email_ids = messages[0].split()
@@ -113,8 +113,12 @@ class EmailClient:
         # 清理邮件ID格式
         email_ids = [self._sanitize_email_id(eid) for eid in email_ids]
         
+        # 按时间倒序排列（最新的邮件在前面）
+        # 由于IMAP返回的ID列表已经是按时间顺序的，我们只需要反转它
+        email_ids.reverse()
+        
         # 返回最新的几封邮件
-        return email_ids[-max_emails:] if len(email_ids) > max_emails else email_ids
+        return email_ids[:max_emails] if len(email_ids) > max_emails else email_ids
     
     def get_email_content(self, email_id: str) -> str:
         """
@@ -292,8 +296,8 @@ class EmailClient:
         # 选择指定的文件夹
         self.mail.select(folder)
         
-        # 搜索指定发件人的邮件
-        status, messages = self.mail.search(None, f'FROM "{sender}"')
+        # 搜索指定发件人的未读邮件
+        status, messages = self.mail.search(None, f'FROM "{sender}" UNSEEN')
         
         # 获取邮件ID列表
         email_ids = messages[0].split()
@@ -301,8 +305,12 @@ class EmailClient:
         # 清理邮件ID格式
         email_ids = [self._sanitize_email_id(eid) for eid in email_ids]
         
+        # 按时间倒序排列（最新的邮件在前面）
+        # 由于IMAP返回的ID列表已经是按时间顺序的，我们只需要反转它
+        email_ids.reverse()
+        
         # 确定要处理的邮件范围
-        email_ids = email_ids[-max_emails:] if len(email_ids) > max_emails else email_ids
+        email_ids = email_ids[:max_emails] if len(email_ids) > max_emails else email_ids
         
         # 分批返回邮件ID
         for i in range(0, len(email_ids), batch_size):
