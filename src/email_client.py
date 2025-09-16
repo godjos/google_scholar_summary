@@ -243,6 +243,36 @@ class EmailClient:
             "receive_time": receive_time
         }
     
+    def mark_email_as_read(self, email_id: str) -> bool:
+        """
+        标记邮件为已读
+        
+        Args:
+            email_id: 邮件ID
+            
+        Returns:
+            标记成功返回True，否则返回False
+        """
+        try:
+            # 确保连接有效
+            self._ensure_connection()
+            
+            # 清理邮件ID
+            email_id = self._sanitize_email_id(email_id)
+            
+            # 标记邮件为已读
+            status, data = self.mail.store(email_id, '+FLAGS', '\\Seen')
+            
+            # 检查操作是否成功
+            if status == 'OK':
+                return True
+            else:
+                print(f"标记邮件 {email_id} 为已读失败: {data}")
+                return False
+        except Exception as e:
+            print(f"标记邮件 {email_id} 为已读时出错: {e}")
+            return False
+    
     def get_emails_batch(self, max_emails: int = 10, batch_size: int = 5, sender: str = "scholaralerts-noreply@google.com", folder: str = "inbox"):
         """
         分批获取邮件ID的生成器函数

@@ -217,6 +217,11 @@ def main():
                 
                 # 标记邮件为已处理（即使其中没有新论文）
                 data_manager_obj.mark_email_processed(email_id, receive_time)
+                # 标记邮件为已读
+                if email_client_obj.mark_email_as_read(email_id):
+                    print(f"  邮件 {email_id} 已标记为已读")
+                else:
+                    print(f"  无法将邮件 {email_id} 标记为已读")
                 total_processed_emails += 1
                 
                 print(f"  从邮件 {email_id} 中新增 {new_papers_in_email} 篇论文")
