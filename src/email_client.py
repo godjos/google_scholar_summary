@@ -8,8 +8,9 @@
 
 import imaplib
 import email
-from typing import List
+from typing import List, Dict
 import datetime
+import re
 
 
 class EmailClient:
@@ -40,6 +41,51 @@ class EmailClient:
         # 登录
         self.mail.login(self.email_address, self.auth_code)
     
+    def _ensure_connection(self):
+        """
+        确保IMAP连接有效，如果连接断开则重新连接
+        """
+        try:
+            # 尝试发送noop命令检查连接状态
+            if self.mail:
+                self.mail.noop()
+            else:
+                # 如果没有连接，则重新连接
+                self.connect()
+        except (imaplib.IMAP4.abort, imaplib.IMAP4.error):
+            # 连接已断开，重新连接
+            try:
+                if self.mail:
+                    self.mail.logout()
+            except:
+                pass
+            self.connect()
+    
+    def _sanitize_email_id(self, email_id):
+        """
+        清理和验证邮件ID格式
+        
+        Args:
+            email_id: 原始邮件ID
+            
+        Returns:
+            清理后的邮件ID
+        """
+        # 如果是bytes类型，先解码
+        if isinstance(email_id, bytes):
+            email_id = email_id.decode('utf-8')
+        
+        # 如果是字符串，去除首尾空格
+        if isinstance(email_id, str):
+            email_id = email_id.strip()
+            
+        # 验证邮件ID是否只包含数字（大多数IMAP服务器的邮件ID是数字）
+        if isinstance(email_id, str) and re.match(r'^\d+$', email_id):
+            return email_id
+            
+        # 如果无法验证格式，转换为字符串并返回
+        return str(email_id)
+    
     def search_scholar_emails(self, max_emails: int = 10, sender: str = "scholaralerts-noreply@google.com", folder: str = "inbox") -> List[str]:
         """
         搜索Google Scholar Alerts邮件
@@ -52,6 +98,9 @@ class EmailClient:
         Returns:
             邮件ID列表
         """
+        # 确保连接有效
+        self._ensure_connection()
+        
         # 选择指定的文件夹
         self.mail.select(folder)
         
@@ -60,6 +109,9 @@ class EmailClient:
         
         # 获取邮件ID列表
         email_ids = messages[0].split()
+        
+        # 清理邮件ID格式
+        email_ids = [self._sanitize_email_id(eid) for eid in email_ids]
         
         # 返回最新的几封邮件
         return email_ids[-max_emails:] if len(email_ids) > max_emails else email_ids
@@ -74,6 +126,12 @@ class EmailClient:
         Returns:
             邮件正文内容
         """
+        # 确保连接有效
+        self._ensure_connection()
+        
+        # 清理邮件ID
+        email_id = self._sanitize_email_id(email_id)
+        
         # 获取邮件内容
         status, msg_data = self.mail.fetch(email_id, "(RFC822)")
         msg = email.message_from_bytes(msg_data[0][1])
@@ -101,6 +159,12 @@ class EmailClient:
         Returns:
             邮件接收时间字符串
         """
+        # 确保连接有效
+        self._ensure_connection()
+        
+        # 清理邮件ID
+        email_id = self._sanitize_email_id(email_id)
+        
         # 获取邮件头部信息
         status, msg_data = self.mail.fetch(email_id, "(RFC822)")
         msg = email.message_from_bytes(msg_data[0][1])
@@ -123,6 +187,62 @@ class EmailClient:
         # 如果无法解析，返回当前时间
         return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    def get_email_info(self, email_id: str) -> Dict[str, str]:
+        """
+        一次性获取邮件的所有必要信息（内容和接收时间）
+        
+        Args:
+            email_id: 邮件ID
+            
+        Returns:
+            包含邮件内容和接收时间的字典
+        """
+        # 确保连接有效
+        self._ensure_connection()
+        
+        # 清理邮件ID
+        email_id = self._sanitize_email_id(email_id)
+        
+        # 获取邮件头部信息和内容
+        status, msg_data = self.mail.fetch(email_id, "(RFC822)")
+        msg = email.message_from_bytes(msg_data[0][1])
+        
+        # 获取邮件正文
+        body = ""
+        if msg.is_multipart():
+            for part in msg.walk():
+                content_type = part.get_content_type()
+                if content_type == "text/plain":
+                    body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                    break
+        else:
+            body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
+        
+        # 获取日期头部
+        date_header = msg.get("Date")
+        receive_time = ""
+        if date_header:
+            try:
+                # 解析日期
+                date_tuple = email.utils.parsedate_tz(date_header)
+                if date_tuple:
+                    # 转换为本地时间
+                    local_date = datetime.datetime.fromtimestamp(
+                        email.utils.mktime_tz(date_tuple)
+                    )
+                    receive_time = local_date.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception as e:
+                print(f"解析邮件时间出错: {e}")
+        
+        # 如果无法解析，返回当前时间
+        if not receive_time:
+            receive_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        return {
+            "content": body,
+            "receive_time": receive_time
+        }
+    
     def get_emails_batch(self, max_emails: int = 10, batch_size: int = 5, sender: str = "scholaralerts-noreply@google.com", folder: str = "inbox"):
         """
         分批获取邮件ID的生成器函数
@@ -136,6 +256,9 @@ class EmailClient:
         Yields:
             邮件ID列表的批次
         """
+        # 确保连接有效
+        self._ensure_connection()
+        
         # 选择指定的文件夹
         self.mail.select(folder)
         
@@ -144,6 +267,9 @@ class EmailClient:
         
         # 获取邮件ID列表
         email_ids = messages[0].split()
+        
+        # 清理邮件ID格式
+        email_ids = [self._sanitize_email_id(eid) for eid in email_ids]
         
         # 确定要处理的邮件范围
         email_ids = email_ids[-max_emails:] if len(email_ids) > max_emails else email_ids
@@ -157,5 +283,11 @@ class EmailClient:
         关闭邮箱连接
         """
         if self.mail:
-            self.mail.close()
-            self.mail.logout()
+            try:
+                self.mail.close()
+                self.mail.logout()
+            except (imaplib.IMAP4.abort, imaplib.IMAP4.error):
+                # 如果连接已经断开，忽略错误
+                pass
+            finally:
+                self.mail = None

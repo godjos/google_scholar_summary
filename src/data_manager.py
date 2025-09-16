@@ -11,6 +11,7 @@ import sqlite3
 from typing import List, Dict
 import hashlib
 import json
+import os
 
 
 class DataManager:
@@ -162,6 +163,10 @@ class DataManager:
         cursor = conn.cursor()
         
         try:
+            # 检查论文是否已存在
+            if self.is_paper_exists(paper.get("link", "")):
+                return False
+                
             # 将列表转换为JSON字符串存储
             highlights = paper.get("highlights", [])
             applications = paper.get("applications", [])
@@ -187,6 +192,58 @@ class DataManager:
         except sqlite3.Error as e:
             print(f"保存论文时出错: {e}")
             return False
+        finally:
+            conn.close()
+    
+    def save_papers_batch(self, papers: List[Dict]):
+        """
+        批量保存论文到数据库
+        
+        Args:
+            papers: 论文信息列表
+        """
+        if not papers:
+            return
+            
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+        
+        try:
+            # 使用事务批量插入
+            saved_count = 0
+            for paper in papers:
+                # 检查论文是否已存在
+                if self.is_paper_exists(paper.get("link", "")):
+                    continue
+                    
+                # 将列表转换为JSON字符串存储
+                highlights = paper.get("highlights", [])
+                applications = paper.get("applications", [])
+                
+                highlights_str = json.dumps(highlights) if isinstance(highlights, list) else str(highlights)
+                applications_str = json.dumps(applications) if isinstance(applications, list) else str(applications)
+                
+                cursor.execute('''
+                    INSERT OR IGNORE INTO papers 
+                    (title, link, abstract, chinese_abstract, highlights, applications)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (
+                    paper.get("title", ""),
+                    paper.get("link", ""),
+                    paper.get("abstract", ""),
+                    paper.get("chinese_abstract", ""),
+                    highlights_str,
+                    applications_str
+                ))
+                
+                if cursor.rowcount > 0:
+                    saved_count += 1
+            
+            conn.commit()
+            print(f"成功批量保存 {saved_count} 篇新论文（跳过 {len(papers) - saved_count} 篇已存在的论文）")
+        except sqlite3.Error as e:
+            print(f"批量保存论文时出错: {e}")
+            conn.rollback()
         finally:
             conn.close()
     
@@ -243,20 +300,19 @@ class DataManager:
         将论文信息保存到CSV文件
         
         Args:
-            papers: 论文信息列表
+            papers: 论文信息列表（此参数将被忽略）
             filename: 保存的文件名
         """
-        # 如果传入的是空列表，则从数据库获取所有论文
-        if not papers:
-            papers = self.get_all_papers_with_receive_time()
-            
+        # 总是从数据库获取所有论文，确保CSV文件与数据库同步
+        all_papers = self.get_all_papers_with_receive_time()
+        
         # 格式化每篇论文的数据
-        formatted_papers = [self.format_paper_data(paper) for paper in papers]
+        formatted_papers = [self.format_paper_data(paper) for paper in all_papers]
         
         # 转换为DataFrame
         df = pd.DataFrame(formatted_papers)
         
-        # 保存为CSV文件
+        # 保存为CSV文件（覆盖模式）
         df.to_csv(filename, index=False, encoding="utf-8-sig")
     
     def save_to_excel(self, papers: List[Dict], filename: str = "scholar_results.xlsx"):
@@ -264,15 +320,14 @@ class DataManager:
         将论文信息保存到Excel文件
         
         Args:
-            papers: 论文信息列表
+            papers: 论文信息列表（此参数将被忽略）
             filename: 保存的文件名
         """
-        # 如果传入的是空列表，则从数据库获取所有论文
-        if not papers:
-            papers = self.get_all_papers_with_receive_time()
-            
+        # 总是从数据库获取所有论文，确保Excel文件与数据库同步
+        all_papers = self.get_all_papers_with_receive_time()
+        
         # 格式化每篇论文的数据
-        formatted_papers = [self.format_paper_data(paper) for paper in papers]
+        formatted_papers = [self.format_paper_data(paper) for paper in all_papers]
         
         # 转换为DataFrame
         df = pd.DataFrame(formatted_papers)

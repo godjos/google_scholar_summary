@@ -81,12 +81,15 @@ def main():
                     continue
                     
                 print(f"  正在处理邮件 ID: {email_id}")
-                # 获取邮件内容
-                email_content = email_client_obj.get_email_content(email_id)
-                
-                # 获取邮件接收时间
-                receive_time = email_client_obj.get_email_receive_time(email_id)
-                print(f"  邮件接收时间: {receive_time}")
+                try:
+                    # 一次性获取邮件内容和接收时间
+                    email_info = email_client_obj.get_email_info(email_id)
+                    email_content = email_info["content"]
+                    receive_time = email_info["receive_time"]
+                    print(f"  邮件接收时间: {receive_time}")
+                except Exception as e:
+                    print(f"  获取邮件 {email_id} 信息失败: {e}")
+                    continue
                 
                 # 解析邮件中的论文信息
                 papers = paper_parser_obj.extract_paper_info(email_content)
@@ -108,15 +111,24 @@ def main():
                     # 根据配置决定是否使用大模型处理
                     if config_obj.use_llm and llm_client_obj:
                         print(f"    正在分析论文: {paper['title'][:50]}...")
-                        # 调用大模型API获取分析结果
-                        llm_result = llm_client_obj.get_paper_analysis(
-                            paper['title'], 
-                            paper['abstract'],
-                            paper['link']
-                        )
-                        
-                        # 合并原始信息和分析结果
-                        paper.update(llm_result)
+                        try:
+                            # 调用大模型API获取分析结果
+                            llm_result = llm_client_obj.get_paper_analysis(
+                                paper['title'], 
+                                paper['abstract'],
+                                paper['link']
+                            )
+                            
+                            # 合并原始信息和分析结果
+                            paper.update(llm_result)
+                        except Exception as e:
+                            print(f"    分析论文 '{paper['title'][:50]}...' 时出错: {e}")
+                            # 使用默认值继续处理
+                            paper.update({
+                                "chinese_abstract": "",
+                                "highlights": [],
+                                "applications": []
+                            })
                     else:
                         # 不使用大模型时，添加默认值
                         paper.update({
@@ -131,11 +143,13 @@ def main():
                         total_new_papers += 1
                         new_papers_in_email += 1
                         
-                    # 创建邮件与论文的关联
-                    data_manager_obj.create_email_paper_relation(email_id, paper['link'])
+                        # 创建邮件与论文的关联
+                        data_manager_obj.create_email_paper_relation(email_id, paper['link'])
                         
-                    # 添加到当前会话处理的论文列表
-                    all_papers.append(paper)
+                        # 添加到当前会话处理的论文列表
+                        all_papers.append(paper)
+                    else:
+                        print(f"    论文 '{paper['title'][:50]}...' 保存失败或已存在")
                 
                 # 标记邮件为已处理（即使其中没有新论文）
                 data_manager_obj.mark_email_processed(email_id, receive_time)
@@ -143,10 +157,10 @@ def main():
                 
                 print(f"  从邮件 {email_id} 中新增 {new_papers_in_email} 篇论文")
             
-            # 每处理完一批邮件就保存一次CSV文件
-            if all_papers:  # 只有当有新论文时才保存
+            # 每处理完一批邮件就保存一次CSV文件，确保文件与数据库同步
+            if new_papers_in_email > 0:  # 只有当有新论文时才保存
                 print(f"  已处理完第 {batch_count} 批邮件，正在保存数据...")
-                data_manager_obj.save_to_csv(all_papers, config_obj.output_file)
+                data_manager_obj.save_to_csv([], config_obj.output_file)  # 传入空列表，让方法从数据库读取所有数据
                 print(f"  结果已保存到 {config_obj.output_file}")
         
         # 最终总结
@@ -165,8 +179,11 @@ def main():
     
     finally:
         # 关闭邮箱连接
-        email_client_obj.close()
-        print("邮箱连接已关闭")
+        try:
+            email_client_obj.close()
+            print("邮箱连接已关闭")
+        except Exception as e:
+            print(f"关闭邮箱连接时出现错误: {e}")
 
 
 if __name__ == "__main__":
