@@ -110,6 +110,10 @@ class EmailClient:
         # 获取邮件ID列表
         email_ids = messages[0].split()
         
+        print(f"IMAP search returned {len(email_ids)} email IDs.")
+
+        exit(0)
+
         # 清理邮件ID格式
         email_ids = [self._sanitize_email_id(eid) for eid in email_ids]
         

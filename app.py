@@ -150,6 +150,11 @@ def main():
                 # 检查邮件是否已处理
                 if data_manager_obj.is_email_processed(email_id):
                     print(f"  邮件 ID {email_id} 已处理过，跳过...")
+                    # 即使邮件已处理，也将其标记为已读
+                    if email_client_obj.mark_email_as_read(email_id, config_obj.email_folder):
+                        print(f"  邮件 {email_id} 已标记为已读")
+                    else:
+                        print(f"  无法将邮件 {email_id} 标记为已读")
                     continue
                     
                 print(f"  正在处理邮件 ID: {email_id}")
