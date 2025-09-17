@@ -304,8 +304,42 @@ class EmailClient:
         # 选择指定的文件夹
         self.mail.select(folder)
         
-        # 搜索指定发件人的未读邮件
-        status, messages = self.mail.search(None, f'FROM "{sender}" UNSEEN')
+        try:
+            # 搜索指定发件人的未读邮件
+            status, messages = self.mail.search(None, f'FROM "{sender}" UNSEEN')
+        except (imaplib.IMAP4.abort, imaplib.IMAP4.error) as e:
+            # 处理IMAP服务器错误，包括服务器繁忙的情况
+            error_msg = str(e).lower()
+            if "busy" in error_msg or "unavailable" in error_msg:
+                print(f"IMAP服务器繁忙或不可用: {e}")
+                # 尝试重新连接
+                print("尝试重新连接...")
+                try:
+                    self._ensure_connection()
+                    # 重新选择文件夹
+                    self.mail.select(folder)
+                    # 再次尝试搜索
+                    status, messages = self.mail.search(None, f'FROM "{sender}" UNSEEN')
+                except (imaplib.IMAP4.abort, imaplib.IMAP4.error) as retry_e:
+                    retry_error_msg = str(retry_e).lower()
+                    if "busy" in retry_error_msg or "unavailable" in retry_error_msg:
+                        print(f"重新连接后仍然无法访问服务器，等待一段时间后再次尝试: {retry_e}")
+                        import time
+                        time.sleep(5)  # 等待5秒
+                        try:
+                            self._ensure_connection()
+                            self.mail.select(folder)
+                            status, messages = self.mail.search(None, f'FROM "{sender}" UNSEEN')
+                        except (imaplib.IMAP4.abort, imaplib.IMAP4.error) as final_e:
+                            print(f"最终尝试仍然失败: {final_e}")
+                            # 返回空列表而不是抛出异常
+                            messages = [b'']
+                    else:
+                        # 其他错误重新抛出
+                        raise
+            else:
+                # 重新抛出其他IMAP错误
+                raise
         
         # 获取邮件ID列表
         email_ids = messages[0].split()
