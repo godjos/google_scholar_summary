@@ -247,12 +247,13 @@ class EmailClient:
             "receive_time": receive_time
         }
     
-    def mark_email_as_read(self, email_id: str) -> bool:
+    def mark_email_as_read(self, email_id: str, folder: str = "inbox") -> bool:
         """
         标记邮件为已读
         
         Args:
             email_id: 邮件ID
+            folder: 邮箱文件夹名称，默认为"inbox"
             
         Returns:
             标记成功返回True，否则返回False
@@ -263,6 +264,9 @@ class EmailClient:
             
             # 清理邮件ID
             email_id = self._sanitize_email_id(email_id)
+            
+            # 选择邮箱文件夹，确保处于SELECTED状态
+            self.mail.select(folder)
             
             # 标记邮件为已读
             status, data = self.mail.store(email_id, '+FLAGS', '\\Seen')
