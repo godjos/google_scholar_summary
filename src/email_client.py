@@ -307,6 +307,20 @@ class EmailClient:
         try:
             # 搜索指定发件人的未读邮件
             status, messages = self.mail.search(None, f'FROM "{sender}" UNSEEN')
+            
+            # 检查返回的消息是否包含服务器忙的提示
+            if messages and len(messages) > 0:
+                # 检查第一条消息是否包含"busy"关键字
+                first_message = messages[0]
+                if isinstance(first_message, bytes):
+                    first_message_str = first_message.decode('utf-8', errors='ignore')
+                else:
+                    first_message_str = str(first_message)
+                    
+                if "busy" in first_message_str.lower():
+                    print(f"IMAP服务器繁忙: {first_message_str}")
+                    # 视为没有找到邮件处理
+                    messages = [b'']
         except (imaplib.IMAP4.abort, imaplib.IMAP4.error) as e:
             # 处理IMAP服务器错误，包括服务器繁忙的情况
             error_msg = str(e).lower()
@@ -320,6 +334,20 @@ class EmailClient:
                     self.mail.select(folder)
                     # 再次尝试搜索
                     status, messages = self.mail.search(None, f'FROM "{sender}" UNSEEN')
+                    
+                    # 再次检查返回的消息是否包含服务器忙的提示
+                    if messages and len(messages) > 0:
+                        # 检查第一条消息是否包含"busy"关键字
+                        first_message = messages[0]
+                        if isinstance(first_message, bytes):
+                            first_message_str = first_message.decode('utf-8', errors='ignore')
+                        else:
+                            first_message_str = str(first_message)
+                            
+                        if "busy" in first_message_str.lower():
+                            print(f"IMAP服务器繁忙: {first_message_str}")
+                            # 视为没有找到邮件处理
+                            messages = [b'']
                 except (imaplib.IMAP4.abort, imaplib.IMAP4.error) as retry_e:
                     retry_error_msg = str(retry_e).lower()
                     if "busy" in retry_error_msg or "unavailable" in retry_error_msg:
@@ -330,6 +358,20 @@ class EmailClient:
                             self._ensure_connection()
                             self.mail.select(folder)
                             status, messages = self.mail.search(None, f'FROM "{sender}" UNSEEN')
+                            
+                            # 再次检查返回的消息是否包含服务器忙的提示
+                            if messages and len(messages) > 0:
+                                # 检查第一条消息是否包含"busy"关键字
+                                first_message = messages[0]
+                                if isinstance(first_message, bytes):
+                                    first_message_str = first_message.decode('utf-8', errors='ignore')
+                                else:
+                                    first_message_str = str(first_message)
+                                    
+                                if "busy" in first_message_str.lower():
+                                    print(f"IMAP服务器繁忙: {first_message_str}")
+                                    # 视为没有找到邮件处理
+                                    messages = [b'']
                         except (imaplib.IMAP4.abort, imaplib.IMAP4.error) as final_e:
                             print(f"最终尝试仍然失败: {final_e}")
                             # 返回空列表而不是抛出异常
@@ -342,10 +384,13 @@ class EmailClient:
                 raise
         
         # 获取邮件ID列表
-        email_ids = messages[0].split()
+        email_ids = messages[0].split() if messages and messages[0] else []
         
         # 清理邮件ID格式
         email_ids = [self._sanitize_email_id(eid) for eid in email_ids]
+        
+        # 过滤掉无效的邮件ID（不是数字的ID）
+        email_ids = [eid for eid in email_ids if re.match(r'^\d+$', str(eid))]
         
         # 按时间倒序排列（最新的邮件在前面）
         # 由于IMAP返回的ID列表已经是按时间顺序的，我们只需要反转它
