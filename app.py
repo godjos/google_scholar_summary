@@ -8,8 +8,8 @@ Google Scholar 邮件通知处理器
 
 import sys
 import os
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
 from itertools import cycle
 
 # 添加src目录到Python路径
@@ -20,6 +20,17 @@ from src.email_client import EmailClient
 from src.paper_parser import PaperParser
 from src.llm_client import LLMClient
 from src.data_manager import DataManager
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('app.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 def analyze_paper_with_client(llm_client, paper):
@@ -34,7 +45,7 @@ def analyze_paper_with_client(llm_client, paper):
         分析结果
     """
     try:
-        print(f"    正在使用API密钥分析论文: {paper['title'][:50]}...")
+        logger.info(f"正在使用API密钥分析论文: {paper['title'][:50]}...")
         llm_result = llm_client.get_paper_analysis(
             paper['title'], 
             paper['abstract'],
@@ -42,7 +53,7 @@ def analyze_paper_with_client(llm_client, paper):
         )
         return llm_result
     except Exception as e:
-        print(f"    使用API密钥分析论文 '{paper['title'][:50]}...' 时出错: {e}")
+        logger.error(f"使用API密钥分析论文 '{paper['title'][:50]}...' 时出错: {e}")
         return None
 
 
@@ -86,228 +97,325 @@ def analyze_paper_parallel(llm_clients, paper):
     }
 
 
+def process_paper_with_llm(paper, email_id, receive_time, llm_client, data_manager):
+    """
+    使用LLM处理单篇论文
+    
+    Args:
+        paper: 论文信息字典
+        email_id: 邮件ID
+        receive_time: 邮件接收时间
+        llm_client: LLM客户端实例
+        data_manager: 数据管理器实例
+        
+    Returns:
+        处理结果（是否成功）
+    """
+    # 添加接收时间到论文信息中
+    paper["receive_time"] = receive_time
+    
+    # 检查论文是否已存在
+    if data_manager.is_paper_exists(paper['link']):
+        logger.info(f"论文 '{paper['title'][:50]}...' 已存在，跳过...")
+        # 仍然创建邮件与论文的关联
+        data_manager.create_email_paper_relation(email_id, paper['link'])
+        return False
+    
+    # 分析论文
+    llm_result = analyze_paper_with_client(llm_client, paper)
+    
+    if llm_result is not None:
+        # 合并原始信息和分析结果
+        paper.update(llm_result)
+    else:
+        # 使用默认值
+        paper.update({
+            "chinese_abstract": "",
+            "highlights": [],
+            "applications": []
+        })
+    
+    # 保存到数据库
+    if data_manager.save_paper(paper):
+        # 创建邮件与论文的关联
+        data_manager.create_email_paper_relation(email_id, paper['link'])
+        return True
+    else:
+        logger.warning(f"论文 '{paper['title'][:50]}...' 保存失败或已存在")
+        return False
+
+
+def process_paper_without_llm(paper, email_id, receive_time, data_manager):
+    """
+    不使用LLM处理单篇论文
+    
+    Args:
+        paper: 论文信息字典
+        email_id: 邮件ID
+        receive_time: 邮件接收时间
+        data_manager: 数据管理器实例
+        
+    Returns:
+        处理结果（是否成功）
+    """
+    # 添加接收时间到论文信息中
+    paper["receive_time"] = receive_time
+    
+    # 检查论文是否已存在
+    if data_manager.is_paper_exists(paper['link']):
+        logger.info(f"论文 '{paper['title'][:50]}...' 已存在，跳过...")
+        # 仍然创建邮件与论文的关联
+        data_manager.create_email_paper_relation(email_id, paper['link'])
+        return False
+    
+    # 不使用大模型时，添加默认值
+    paper.update({
+        "chinese_abstract": "",
+        "highlights": [],
+        "applications": []
+    })
+    logger.info(f"收集论文信息: {paper['title'][:50]}...")
+    
+    # 保存到数据库
+    if data_manager.save_paper(paper):
+        # 创建邮件与论文的关联
+        data_manager.create_email_paper_relation(email_id, paper['link'])
+        return True
+    else:
+        logger.warning(f"论文 '{paper['title'][:50]}...' 保存失败或已存在")
+        return False
+
+
+def process_email(email_id, email_client, paper_parser, data_manager, config, llm_clients):
+    """
+    处理单封邮件
+    
+    Args:
+        email_id: 邮件ID
+        email_client: 邮箱客户端实例
+        paper_parser: 论文解析器实例
+        data_manager: 数据管理器实例
+        config: 配置对象
+        llm_clients: LLM客户端实例列表
+        
+    Returns:
+        tuple: (新增论文数量, 处理的论文列表)
+    """
+    # 检查邮件是否已处理
+    if data_manager.is_email_processed(email_id):
+        logger.info(f"邮件 ID {email_id} 已处理过，跳过...")
+        # 即使邮件已处理，也将其标记为已读
+        if email_client.mark_email_as_read(email_id, config.email_folder):
+            logger.info(f"邮件 {email_id} 已标记为已读")
+        else:
+            logger.warning(f"无法将邮件 {email_id} 标记为已读")
+        return 0, []
+        
+    logger.info(f"正在处理邮件 ID: {email_id}")
+    try:
+        # 一次性获取邮件内容和接收时间
+        email_info = email_client.get_email_info(email_id)
+        email_content = email_info["content"]
+        receive_time = email_info["receive_time"]
+        logger.info(f"邮件接收时间: {receive_time}")
+    except Exception as e:
+        logger.error(f"获取邮件 {email_id} 信息失败: {e}")
+        return 0, []
+    
+    # 解析邮件中的论文信息
+    papers = paper_parser.extract_paper_info(email_content)
+    logger.info(f"从邮件中提取到 {len(papers)} 篇论文")
+    
+    # 初始化新增论文计数器
+    new_papers_count = 0
+    processed_papers = []
+    
+    # 处理每篇论文
+    if config.use_llm and llm_clients:
+        # 如果启用了LLM且有API密钥，则并行处理多篇论文
+        logger.info(f"并行处理 {len(papers)} 篇论文...")
+        
+        # 创建API密钥循环迭代器
+        api_cycle = cycle(llm_clients)
+        
+        # 使用线程池并行处理论文
+        with ThreadPoolExecutor(max_workers=min(len(papers), len(llm_clients))) as executor:
+            # 提交论文分析任务
+            future_to_paper = {}
+            for paper in papers:
+                # 分配API密钥
+                client = next(api_cycle)
+                future = executor.submit(
+                    process_paper_with_llm, 
+                    paper, 
+                    email_id, 
+                    receive_time, 
+                    client, 
+                    data_manager
+                )
+                future_to_paper[future] = paper
+            
+            # 处理完成的任务
+            for future in as_completed(future_to_paper):
+                paper = future_to_paper[future]
+                try:
+                    result = future.result()
+                    if result:
+                        new_papers_count += 1
+                        processed_papers.append(paper)
+                except Exception as e:
+                    logger.error(f"处理论文 '{paper['title'][:50]}...' 时出错: {e}")
+    else:
+        # 不使用大模型时，顺序处理论文
+        for paper in papers:
+            if process_paper_without_llm(paper, email_id, receive_time, data_manager):
+                new_papers_count += 1
+                processed_papers.append(paper)
+    
+    # 标记邮件为已处理（即使其中没有新论文）
+    data_manager.mark_email_processed(email_id, receive_time)
+    # 标记邮件为已读
+    if email_client.mark_email_as_read(email_id, config.email_folder):
+        logger.info(f"邮件 {email_id} 已标记为已读")
+    else:
+        logger.warning(f"无法将邮件 {email_id} 标记为已读")
+    
+    logger.info(f"从邮件 {email_id} 中新增 {new_papers_count} 篇论文")
+    return new_papers_count, processed_papers
+
+
 def main():
     """
     主函数
     """
     # 加载配置
-    config_obj = Config()
+    config = Config()
     
     # 创建邮箱客户端实例
-    email_client_obj = EmailClient(
-        config_obj.email_address, 
-        config_obj.auth_code
+    email_client = EmailClient(
+        config.email_address, 
+        config.auth_code,
+        config.imap_server,
+        config.imap_port
     )
     
     # 创建论文解析器实例
-    paper_parser_obj = PaperParser()
+    paper_parser = PaperParser()
     
     # 根据配置决定是否创建大模型客户端实例
-    llm_client_objs = []
-    if config_obj.use_llm:
-        for api_key in config_obj.llm_api_keys:
+    llm_clients = []
+    if config.use_llm:
+        for api_key in config.llm_api_keys:
             llm_client = LLMClient(
                 api_key,
-                config_obj.llm_api_base_url,
-                config_obj.llm_model_name
+                config.llm_api_base_url,
+                config.llm_model_name
             )
-            llm_client_objs.append(llm_client)
-        print(f"大模型处理已启用，使用 {len(llm_client_objs)} 个API密钥")
+            llm_clients.append(llm_client)
+        logger.info(f"大模型处理已启用，使用 {len(llm_clients)} 个API密钥")
+        
+        # 测试大模型API连接
+        logger.info("正在测试大模型API连接...")
+        api_test_results = []
+        for i, llm_client in enumerate(llm_clients):
+            logger.info(f"测试第 {i+1} 个API密钥...")
+            test_result = llm_client.test_api_connection()
+            api_test_results.append(test_result)
+        
+        # 检查测试结果
+        if any(api_test_results):
+            logger.info("大模型API连接测试通过，继续执行")
+            # 过滤掉测试失败的客户端
+            llm_clients = [client for client, result in zip(llm_clients, api_test_results) if result]
+            logger.info(f"剩余 {len(llm_clients)} 个可用的API密钥")
+        else:
+            logger.error("所有大模型API连接测试都失败，暂停执行")
+            logger.error("请检查API密钥、API基础URL和模型名称是否正确")
+            logger.error("如需继续执行，请禁用大模型处理 (USE_LLM=false)")
+            sys.exit(1)
     else:
-        print("大模型处理已禁用，仅收集论文基本信息")
+        logger.info("大模型处理已禁用，仅收集论文基本信息")
     
     # 创建数据管理器实例
-    data_manager_obj = DataManager(config_obj.database_path)
+    data_manager = DataManager(config.database_path)
     
     try:
         # 连接邮箱
-        print("正在连接邮箱...")
-        email_client_obj.connect()
+        logger.info("正在连接邮箱...")
+        email_client.connect()
+        
+        # 检查配置的邮箱文件夹是否存在
+        logger.info(f"正在检查邮箱文件夹 '{config.email_folder}' 是否存在...")
+        folder_exists = email_client.check_folder_exists(config.email_folder)
+        if not folder_exists:
+            logger.warning(f"配置的邮箱文件夹 '{config.email_folder}' 不存在，将使用默认文件夹 'inbox'")
+            # 更新配置为默认文件夹
+            config.email_folder = "inbox"
+            logger.info("已切换到默认文件夹 'inbox'")
         
         # 初始化统计信息
         total_processed_emails = 0
         total_new_papers = 0
-        all_papers = []  # 仅存储当前会话处理的论文
+        all_processed_papers = []  # 仅存储当前会话处理的论文
         
-        print("开始流式处理邮件...")
+        logger.info("开始流式处理邮件...")
         
         # 使用流式处理方式分批处理邮件
         batch_count = 0
-        for email_batch in email_client_obj.get_emails_batch(
-            max_emails=config_obj.max_emails, 
+        for email_batch in email_client.get_emails_batch(
+            max_emails=config.max_emails, 
             batch_size=5,  # 每批处理5封邮件
-            sender=config_obj.scholar_sender, 
-            folder=config_obj.email_folder
+            sender=config.scholar_sender, 
+            folder=config.email_folder
         ):
             batch_count += 1
-            print(f"正在处理第 {batch_count} 批邮件，本批包含 {len(email_batch)} 封邮件")
+            logger.info(f"正在处理第 {batch_count} 批邮件，本批包含 {len(email_batch)} 封邮件")
             
             # 初始化每批邮件新增论文计数器
-            new_papers_in_email = 0
+            batch_new_papers = 0
             
             # 处理每封邮件
             for email_id in email_batch:
-                # 检查邮件是否已处理
-                if data_manager_obj.is_email_processed(email_id):
-                    print(f"  邮件 ID {email_id} 已处理过，跳过...")
-                    # 即使邮件已处理，也将其标记为已读
-                    if email_client_obj.mark_email_as_read(email_id, config_obj.email_folder):
-                        print(f"  邮件 {email_id} 已标记为已读")
-                    else:
-                        print(f"  无法将邮件 {email_id} 标记为已读")
-                    continue
-                    
-                print(f"  正在处理邮件 ID: {email_id}")
-                try:
-                    # 一次性获取邮件内容和接收时间
-                    email_info = email_client_obj.get_email_info(email_id)
-                    email_content = email_info["content"]
-                    receive_time = email_info["receive_time"]
-                    print(f"  邮件接收时间: {receive_time}")
-                except Exception as e:
-                    print(f"  获取邮件 {email_id} 信息失败: {e}")
-                    continue
-                
-                # 解析邮件中的论文信息
-                papers = paper_parser_obj.extract_paper_info(email_content)
-                print(f"  从邮件中提取到 {len(papers)} 篇论文")
-                
-                # 处理每篇论文（并行处理多篇论文）
-                if config_obj.use_llm and llm_client_objs:
-                    # 如果启用了LLM且有API密钥，则并行处理多篇论文
-                    print(f"    并行处理 {len(papers)} 篇论文...")
-                    
-                    # 创建API密钥循环迭代器
-                    api_cycle = cycle(llm_client_objs)
-                    
-                    # 使用线程池并行处理论文
-                    with ThreadPoolExecutor(max_workers=min(len(papers), len(llm_client_objs))) as executor:
-                        # 提交论文分析任务
-                        future_to_paper = {}
-                        for paper in papers:
-                            # 添加接收时间到论文信息中
-                            paper["receive_time"] = receive_time
-                            
-                            # 检查论文是否已存在
-                            if data_manager_obj.is_paper_exists(paper['link']):
-                                print(f"    论文 '{paper['title'][:50]}...' 已存在，跳过...")
-                                # 仍然创建邮件与论文的关联
-                                data_manager_obj.create_email_paper_relation(email_id, paper['link'])
-                                continue
-                            
-                            # 分配API密钥
-                            client = next(api_cycle)
-                            future = executor.submit(analyze_paper_with_client, client, paper)
-                            future_to_paper[future] = paper
-                        
-                        # 处理完成的任务
-                        for future in as_completed(future_to_paper):
-                            paper = future_to_paper[future]
-                            try:
-                                llm_result = future.result()
-                                if llm_result is not None:
-                                    # 合并原始信息和分析结果
-                                    paper.update(llm_result)
-                                else:
-                                    # 使用默认值
-                                    paper.update({
-                                        "chinese_abstract": "",
-                                        "highlights": [],
-                                        "applications": []
-                                    })
-                            except Exception as e:
-                                print(f"    分析论文 '{paper['title'][:50]}...' 时出错: {e}")
-                                # 使用默认值继续处理
-                                paper.update({
-                                    "chinese_abstract": "",
-                                    "highlights": [],
-                                    "applications": []
-                                })
-                            
-                            # 保存到数据库
-                            if data_manager_obj.save_paper(paper):
-                                total_new_papers += 1
-                                new_papers_in_email += 1
-                                
-                                # 创建邮件与论文的关联
-                                data_manager_obj.create_email_paper_relation(email_id, paper['link'])
-                                
-                                # 添加到当前会话处理的论文列表
-                                all_papers.append(paper)
-                            else:
-                                print(f"    论文 '{paper['title'][:50]}...' 保存失败或已存在")
-                else:
-                    # 不使用大模型时，顺序处理论文
-                    for paper in papers:
-                        # 添加接收时间到论文信息中
-                        paper["receive_time"] = receive_time
-                        
-                        # 检查论文是否已存在
-                        if data_manager_obj.is_paper_exists(paper['link']):
-                            print(f"    论文 '{paper['title'][:50]}...' 已存在，跳过...")
-                            # 仍然创建邮件与论文的关联
-                            data_manager_obj.create_email_paper_relation(email_id, paper['link'])
-                            continue
-                            
-                        # 不使用大模型时，添加默认值
-                        paper.update({
-                            "chinese_abstract": "",
-                            "highlights": [],
-                            "applications": []
-                        })
-                        print(f"    收集论文信息: {paper['title'][:50]}...")
-                        
-                        # 保存到数据库
-                        if data_manager_obj.save_paper(paper):
-                            total_new_papers += 1
-                            new_papers_in_email += 1
-                            
-                            # 创建邮件与论文的关联
-                            data_manager_obj.create_email_paper_relation(email_id, paper['link'])
-                            
-                            # 添加到当前会话处理的论文列表
-                            all_papers.append(paper)
-                        else:
-                            print(f"    论文 '{paper['title'][:50]}...' 保存失败或已存在")
-                
-                # 标记邮件为已处理（即使其中没有新论文）
-                data_manager_obj.mark_email_processed(email_id, receive_time)
-                # 标记邮件为已读
-                if email_client_obj.mark_email_as_read(email_id, config_obj.email_folder):
-                    print(f"  邮件 {email_id} 已标记为已读")
-                else:
-                    print(f"  无法将邮件 {email_id} 标记为已读")
+                new_papers, processed_papers = process_email(
+                    email_id, 
+                    email_client, 
+                    paper_parser, 
+                    data_manager, 
+                    config, 
+                    llm_clients
+                )
+                batch_new_papers += new_papers
+                total_new_papers += new_papers
+                all_processed_papers.extend(processed_papers)
                 total_processed_emails += 1
-                
-                print(f"  从邮件 {email_id} 中新增 {new_papers_in_email} 篇论文")
             
             # 每处理完一批邮件就保存一次CSV文件，确保文件与数据库同步
-            if new_papers_in_email > 0:  # 只有当有新论文时才保存
-                print(f"  已处理完第 {batch_count} 批邮件，正在保存数据...")
-                data_manager_obj.save_to_csv([], config_obj.output_file)  # 传入空列表，让方法从数据库读取所有数据
-                print(f"  结果已保存到 {config_obj.output_file}")
+            if batch_new_papers > 0:  # 只有当有新论文时才保存
+                logger.info(f"已处理完第 {batch_count} 批邮件，正在保存数据...")
+                data_manager.save_to_csv([], config.output_file)  # 传入空列表，让方法从数据库读取所有数据
+                logger.info(f"结果已保存到 {config.output_file}")
         
         # 最终总结
-        print("\n处理完成!")
-        print(f"总共处理了 {total_processed_emails} 封邮件")
-        print(f"本次新增 {total_new_papers} 篇论文")
-        if all_papers:
-            print(f"当前会话处理了 {len(all_papers)} 篇新论文")
+        logger.info("\n处理完成!")
+        logger.info(f"总共处理了 {total_processed_emails} 封邮件")
+        logger.info(f"本次新增 {total_new_papers} 篇论文")
+        if all_processed_papers:
+            logger.info(f"当前会话处理了 {len(all_processed_papers)} 篇新论文")
         else:
-            print("没有新的论文需要处理")
+            logger.info("没有新的论文需要处理")
         
     except Exception as e:
-        print(f"处理过程中出现错误: {e}")
+        logger.error(f"处理过程中出现错误: {e}")
         import traceback
         traceback.print_exc()
     
     finally:
         # 关闭邮箱连接
         try:
-            email_client_obj.close()
-            print("邮箱连接已关闭")
+            email_client.close()
+            logger.info("邮箱连接已关闭")
         except Exception as e:
-            print(f"关闭邮箱连接时出现错误: {e}")
+            logger.error(f"关闭邮箱连接时出现错误: {e}")
 
 
 if __name__ == "__main__":

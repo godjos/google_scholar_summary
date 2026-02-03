@@ -8,10 +8,20 @@
 
 import pandas as pd
 import sqlite3
-from typing import List, Dict
-import hashlib
+from typing import List, Dict, Optional, ContextManager
 import json
-import os
+import logging
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('data_manager.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 class DataManager:
@@ -33,45 +43,53 @@ class DataManager:
         """
         初始化数据库表
         """
-        conn = sqlite3.connect(self.database_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 创建已处理邮件表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS processed_emails (
+                    email_id TEXT PRIMARY KEY,
+                    receive_time TEXT,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # 创建论文信息表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS papers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    link TEXT UNIQUE,
+                    abstract TEXT,
+                    chinese_abstract TEXT,
+                    highlights TEXT,
+                    applications TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # 创建邮件与论文关联表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS email_paper_relations (
+                    email_id TEXT,
+                    paper_link TEXT,
+                    FOREIGN KEY (email_id) REFERENCES processed_emails (email_id),
+                    FOREIGN KEY (paper_link) REFERENCES papers (link),
+                    PRIMARY KEY (email_id, paper_link)
+                )
+            ''')
+            
+            conn.commit()
+    
+    def _get_connection(self) -> ContextManager[sqlite3.Connection]:
+        """
+        获取数据库连接的上下文管理器
         
-        # 创建已处理邮件表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS processed_emails (
-                email_id TEXT PRIMARY KEY,
-                receive_time TEXT,
-                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # 创建论文信息表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS papers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                link TEXT UNIQUE,
-                abstract TEXT,
-                chinese_abstract TEXT,
-                highlights TEXT,
-                applications TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # 创建邮件与论文关联表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS email_paper_relations (
-                email_id TEXT,
-                paper_link TEXT,
-                FOREIGN KEY (email_id) REFERENCES processed_emails (email_id),
-                FOREIGN KEY (paper_link) REFERENCES papers (link),
-                PRIMARY KEY (email_id, paper_link)
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
+        Returns:
+            数据库连接上下文管理器
+        """
+        return sqlite3.connect(self.database_path)
     
     def is_email_processed(self, email_id: str) -> bool:
         """
@@ -83,14 +101,13 @@ class DataManager:
         Returns:
             是否已处理
         """
-        conn = sqlite3.connect(self.database_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT 1 FROM processed_emails WHERE email_id = ?', (email_id,))
-        result = cursor.fetchone()
-        
-        conn.close()
-        return result is not None
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT 1 FROM processed_emails WHERE email_id = ?', (email_id,))
+            result = cursor.fetchone()
+            
+            return result is not None
     
     def mark_email_processed(self, email_id: str, receive_time: str = ""):
         """
@@ -100,16 +117,15 @@ class DataManager:
             email_id: 邮件ID
             receive_time: 邮件接收时间
         """
-        conn = sqlite3.connect(self.database_path)
-        cursor = conn.cursor()
-        
-        cursor.execute(
-            'INSERT OR IGNORE INTO processed_emails (email_id, receive_time) VALUES (?, ?)', 
-            (email_id, receive_time)
-        )
-        
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                'INSERT OR IGNORE INTO processed_emails (email_id, receive_time) VALUES (?, ?)', 
+                (email_id, receive_time)
+            )
+            
+            conn.commit()
     
     def is_paper_exists(self, paper_link: str) -> bool:
         """
@@ -121,14 +137,13 @@ class DataManager:
         Returns:
             是否已存在
         """
-        conn = sqlite3.connect(self.database_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT 1 FROM papers WHERE link = ?', (paper_link,))
-        result = cursor.fetchone()
-        
-        conn.close()
-        return result is not None
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT 1 FROM papers WHERE link = ?', (paper_link,))
+            result = cursor.fetchone()
+            
+            return result is not None
     
     def create_email_paper_relation(self, email_id: str, paper_link: str):
         """
@@ -138,16 +153,15 @@ class DataManager:
             email_id: 邮件ID
             paper_link: 论文链接
         """
-        conn = sqlite3.connect(self.database_path)
-        cursor = conn.cursor()
-        
-        cursor.execute(
-            'INSERT OR IGNORE INTO email_paper_relations (email_id, paper_link) VALUES (?, ?)',
-            (email_id, paper_link)
-        )
-        
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                'INSERT OR IGNORE INTO email_paper_relations (email_id, paper_link) VALUES (?, ?)',
+                (email_id, paper_link)
+            )
+            
+            conn.commit()
     
     def save_paper(self, paper: Dict) -> bool:
         """
@@ -159,62 +173,14 @@ class DataManager:
         Returns:
             是否保存成功
         """
-        conn = sqlite3.connect(self.database_path)
-        cursor = conn.cursor()
-        
-        try:
-            # 检查论文是否已存在
-            if self.is_paper_exists(paper.get("link", "")):
-                return False
-                
-            # 将列表转换为JSON字符串存储
-            highlights = paper.get("highlights", [])
-            applications = paper.get("applications", [])
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
             
-            highlights_str = json.dumps(highlights) if isinstance(highlights, list) else str(highlights)
-            applications_str = json.dumps(applications) if isinstance(applications, list) else str(applications)
-            
-            cursor.execute('''
-                INSERT OR IGNORE INTO papers 
-                (title, link, abstract, chinese_abstract, highlights, applications)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                paper.get("title", ""),
-                paper.get("link", ""),
-                paper.get("abstract", ""),
-                paper.get("chinese_abstract", ""),
-                highlights_str,
-                applications_str
-            ))
-            
-            conn.commit()
-            return cursor.rowcount > 0
-        except sqlite3.Error as e:
-            print(f"保存论文时出错: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    def save_papers_batch(self, papers: List[Dict]):
-        """
-        批量保存论文到数据库
-        
-        Args:
-            papers: 论文信息列表
-        """
-        if not papers:
-            return
-            
-        conn = sqlite3.connect(self.database_path)
-        cursor = conn.cursor()
-        
-        try:
-            # 使用事务批量插入
-            saved_count = 0
-            for paper in papers:
+            try:
                 # 检查论文是否已存在
-                if self.is_paper_exists(paper.get("link", "")):
-                    continue
+                cursor.execute('SELECT 1 FROM papers WHERE link = ?', (paper.get("link", ""),))
+                if cursor.fetchone():
+                    return False
                     
                 # 将列表转换为JSON字符串存储
                 highlights = paper.get("highlights", [])
@@ -236,16 +202,74 @@ class DataManager:
                     applications_str
                 ))
                 
-                if cursor.rowcount > 0:
-                    saved_count += 1
+                conn.commit()
+                return cursor.rowcount > 0
+            except sqlite3.Error as e:
+                logger.error(f"保存论文时出错: {e}")
+                return False
+    
+    def save_papers_batch(self, papers: List[Dict]):
+        """
+        批量保存论文到数据库
+        
+        Args:
+            papers: 论文信息列表
+        """
+        if not papers:
+            return
             
-            conn.commit()
-            print(f"成功批量保存 {saved_count} 篇新论文（跳过 {len(papers) - saved_count} 篇已存在的论文）")
-        except sqlite3.Error as e:
-            print(f"批量保存论文时出错: {e}")
-            conn.rollback()
-        finally:
-            conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            try:
+                # 使用事务批量插入
+                saved_count = 0
+                
+                # 先获取所有已存在的论文链接
+                existing_links = set()
+                if papers:
+                    links = [paper.get("link", "") for paper in papers if paper.get("link", "")]
+                    if links:
+                        placeholders = ', '.join(['?'] * len(links))
+                        cursor.execute(f'SELECT link FROM papers WHERE link IN ({placeholders})', links)
+                        for row in cursor.fetchall():
+                            existing_links.add(row[0])
+                
+                for paper in papers:
+                    link = paper.get("link", "")
+                    # 检查论文是否已存在
+                    if link in existing_links:
+                        continue
+                    
+                    # 将列表转换为JSON字符串存储
+                    highlights = paper.get("highlights", [])
+                    applications = paper.get("applications", [])
+                    
+                    highlights_str = json.dumps(highlights) if isinstance(highlights, list) else str(highlights)
+                    applications_str = json.dumps(applications) if isinstance(applications, list) else str(applications)
+                    
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO papers 
+                        (title, link, abstract, chinese_abstract, highlights, applications)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (
+                        paper.get("title", ""),
+                        link,
+                        paper.get("abstract", ""),
+                        paper.get("chinese_abstract", ""),
+                        highlights_str,
+                        applications_str
+                    ))
+                    
+                    if cursor.rowcount > 0:
+                        saved_count += 1
+                        existing_links.add(link)  # 添加到已存在集合，避免重复检查
+                
+                conn.commit()
+                logger.info(f"成功批量保存 {saved_count} 篇新论文（跳过 {len(papers) - saved_count} 篇已存在的论文）")
+            except sqlite3.Error as e:
+                logger.error(f"批量保存论文时出错: {e}")
+                conn.rollback()
     
     def get_all_papers_with_receive_time(self) -> List[Dict]:
         """
@@ -254,20 +278,19 @@ class DataManager:
         Returns:
             论文信息列表（包含接收时间）
         """
-        conn = sqlite3.connect(self.database_path)
-        cursor = conn.cursor()
-        
-        # 查询论文信息及关联的邮件接收时间
-        cursor.execute('''
-            SELECT p.title, p.link, p.abstract, p.chinese_abstract, p.highlights, p.applications, pe.receive_time
-            FROM papers p
-            LEFT JOIN email_paper_relations epr ON p.link = epr.paper_link
-            LEFT JOIN processed_emails pe ON epr.email_id = pe.email_id
-            ORDER BY p.created_at DESC
-        ''')
-        
-        rows = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 查询论文信息及关联的邮件接收时间
+            cursor.execute('''
+                SELECT p.title, p.link, p.abstract, p.chinese_abstract, p.highlights, p.applications, pe.receive_time
+                FROM papers p
+                LEFT JOIN email_paper_relations epr ON p.link = epr.paper_link
+                LEFT JOIN processed_emails pe ON epr.email_id = pe.email_id
+                ORDER BY p.created_at DESC
+            ''')
+            
+            rows = cursor.fetchall()
         
         papers = []
         for row in rows:
@@ -303,17 +326,25 @@ class DataManager:
             papers: 论文信息列表（此参数将被忽略）
             filename: 保存的文件名
         """
-        # 总是从数据库获取所有论文，确保CSV文件与数据库同步
-        all_papers = self.get_all_papers_with_receive_time()
-        
-        # 格式化每篇论文的数据
-        formatted_papers = [self.format_paper_data(paper) for paper in all_papers]
-        
-        # 转换为DataFrame
-        df = pd.DataFrame(formatted_papers)
-        
-        # 保存为CSV文件（覆盖模式）
-        df.to_csv(filename, index=False, encoding="utf-8-sig")
+        try:
+            # 总是从数据库获取所有论文，确保CSV文件与数据库同步
+            all_papers = self.get_all_papers_with_receive_time()
+            
+            if not all_papers:
+                logger.warning("没有论文数据可保存到CSV文件")
+                return
+            
+            # 格式化每篇论文的数据
+            formatted_papers = [self.format_paper_data(paper) for paper in all_papers]
+            
+            # 转换为DataFrame
+            df = pd.DataFrame(formatted_papers)
+            
+            # 保存为CSV文件（覆盖模式）
+            df.to_csv(filename, index=False, encoding="utf-8-sig")
+            logger.info(f"成功将 {len(all_papers)} 篇论文保存到CSV文件: {filename}")
+        except Exception as e:
+            logger.error(f"保存CSV文件时出错: {e}")
     
     def save_to_excel(self, papers: List[Dict], filename: str = "scholar_results.xlsx"):
         """
@@ -323,17 +354,25 @@ class DataManager:
             papers: 论文信息列表（此参数将被忽略）
             filename: 保存的文件名
         """
-        # 总是从数据库获取所有论文，确保Excel文件与数据库同步
-        all_papers = self.get_all_papers_with_receive_time()
-        
-        # 格式化每篇论文的数据
-        formatted_papers = [self.format_paper_data(paper) for paper in all_papers]
-        
-        # 转换为DataFrame
-        df = pd.DataFrame(formatted_papers)
-        
-        # 保存为Excel文件
-        df.to_excel(filename, index=False)
+        try:
+            # 总是从数据库获取所有论文，确保Excel文件与数据库同步
+            all_papers = self.get_all_papers_with_receive_time()
+            
+            if not all_papers:
+                logger.warning("没有论文数据可保存到Excel文件")
+                return
+            
+            # 格式化每篇论文的数据
+            formatted_papers = [self.format_paper_data(paper) for paper in all_papers]
+            
+            # 转换为DataFrame
+            df = pd.DataFrame(formatted_papers)
+            
+            # 保存为Excel文件
+            df.to_excel(filename, index=False)
+            logger.info(f"成功将 {len(all_papers)} 篇论文保存到Excel文件: {filename}")
+        except Exception as e:
+            logger.error(f"保存Excel文件时出错: {e}")
     
     def format_paper_data(self, paper: Dict) -> Dict:
         """
