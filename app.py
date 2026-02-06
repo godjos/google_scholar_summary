@@ -232,39 +232,30 @@ def process_email(email_id, email_client, paper_parser, data_manager, config, ll
     
     # 处理每篇论文
     if config.use_llm and llm_clients:
-        # 如果启用了LLM且有API密钥，则并行处理多篇论文
-        logger.info(f"并行处理 {len(papers)} 篇论文...")
+        # 如果启用了LLM且有API密钥
+        logger.info(f"顺序处理 {len(papers)} 篇论文...")
         
         # 创建API密钥循环迭代器
         api_cycle = cycle(llm_clients)
         
-        # 使用线程池并行处理论文
-        with ThreadPoolExecutor(max_workers=min(len(papers), len(llm_clients))) as executor:
-            # 提交论文分析任务
-            future_to_paper = {}
-            for paper in papers:
-                # 分配API密钥
-                client = next(api_cycle)
-                future = executor.submit(
-                    process_paper_with_llm, 
+        for paper in papers:
+            # 分配API密钥
+            client = next(api_cycle)
+            try:
+                # 顺序处理
+                result = process_paper_with_llm(
                     paper, 
                     email_id, 
                     receive_time, 
                     client, 
                     data_manager
                 )
-                future_to_paper[future] = paper
-            
-            # 处理完成的任务
-            for future in as_completed(future_to_paper):
-                paper = future_to_paper[future]
-                try:
-                    result = future.result()
-                    if result:
-                        new_papers_count += 1
-                        processed_papers.append(paper)
-                except Exception as e:
-                    logger.error(f"处理论文 '{paper['title'][:50]}...' 时出错: {e}")
+                if result:
+                    new_papers_count += 1
+                    processed_papers.append(paper)
+            except Exception as e:
+                logger.error(f"处理论文 '{paper['title'][:50]}...' 时出错: {e}")
+                
     else:
         # 不使用大模型时，顺序处理论文
         for paper in papers:
@@ -312,32 +303,23 @@ def main():
                 config.llm_model_name
             )
             llm_clients.append(llm_client)
-        logger.info(f"大模型处理已启用，使用 {len(llm_clients)} 个API密钥")
+        logger.info(f"大模型处理已启用，已加载 {len(llm_clients)} 个API密钥")
         
-        # 测试大模型API连接
-        logger.info("正在测试大模型API连接...")
-        api_test_results = []
-        for i, llm_client in enumerate(llm_clients):
-            logger.info(f"测试第 {i+1} 个API密钥...")
-            test_result = llm_client.test_api_connection()
-            api_test_results.append(test_result)
+        # 跳过耗时的API连接测试，直接开始处理
+        # 如果密钥无效，将在实际处理时报错
+        if not llm_clients:
+             logger.error("未找到有效的API密钥，请检查配置")
+             sys.exit(1)
         
-        # 检查测试结果
-        if any(api_test_results):
-            logger.info("大模型API连接测试通过，继续执行")
-            # 过滤掉测试失败的客户端
-            llm_clients = [client for client, result in zip(llm_clients, api_test_results) if result]
-            logger.info(f"剩余 {len(llm_clients)} 个可用的API密钥")
-        else:
-            logger.error("所有大模型API连接测试都失败，暂停执行")
-            logger.error("请检查API密钥、API基础URL和模型名称是否正确")
-            logger.error("如需继续执行，请禁用大模型处理 (USE_LLM=false)")
-            sys.exit(1)
     else:
         logger.info("大模型处理已禁用，仅收集论文基本信息")
     
     # 创建数据管理器实例
     data_manager = DataManager(config.database_path)
+    
+    # 启动时清理重复标题的论文
+    logger.info("正在检查并清理数据库中的重复标题论文...")
+    data_manager.remove_duplicate_titles()
     
     try:
         # 连接邮箱
@@ -393,7 +375,11 @@ def main():
             if batch_new_papers > 0:  # 只有当有新论文时才保存
                 logger.info(f"已处理完第 {batch_count} 批邮件，正在保存数据...")
                 data_manager.save_to_csv([], config.output_file)  # 传入空列表，让方法从数据库读取所有数据
-                logger.info(f"结果已保存到 {config.output_file}")
+                # 同时保存HTML报告 (保存到 reports 文件夹)
+                html_filename = 'index.html'
+                html_path = os.path.join('reports', html_filename)
+                data_manager.save_to_html([], html_path)
+                logger.info(f"结果已保存到 {config.output_file} 和 {html_path}")
         
         # 最终总结
         logger.info("\n处理完成!")
@@ -403,6 +389,13 @@ def main():
             logger.info(f"当前会话处理了 {len(all_processed_papers)} 篇新论文")
         else:
             logger.info("没有新的论文需要处理")
+            
+        # 始终重新生成HTML报告，以确保包含最新的排序和格式更新
+        logger.info("正在生成最新的HTML报告...")
+        html_filename = 'index.html'
+        html_path = os.path.join('reports', html_filename)
+        data_manager.save_to_html([], html_path)
+        logger.info(f"HTML报告已生成: {html_path}")
         
     except Exception as e:
         logger.error(f"处理过程中出现错误: {e}")

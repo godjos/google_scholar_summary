@@ -166,3 +166,5 @@ cython_debug/
 # 日志文件
 *.log
 *.db
+
+*.html
